@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Callable, Optional, Type
+from typing import TYPE_CHECKING, Any, Callable, Optional, Type
 
 import numpy as np
 from typing_extensions import Protocol
@@ -21,49 +21,50 @@ if TYPE_CHECKING:
 
 class MapProto(Protocol):
     def __call__(self, x: Tensor, out: Optional[Tensor] = ..., /) -> Tensor:
-        """Call a map function"""
         ...
 
 
 class TensorOps:
     @staticmethod
     def map(fn: Callable[[float], float]) -> MapProto:
-        """Map placeholder"""
-        ...
+        pass
 
     @staticmethod
-    def zip(
-        fn: Callable[[float, float], float],
-    ) -> Callable[[Tensor, Tensor], Tensor]:
-        """Zip placeholder"""
-        ...
+    def cmap(fn: Callable[[float], float]) -> Callable[[Tensor, Tensor], Tensor]:
+        pass
+
+    @staticmethod
+    def zip(fn: Callable[[float, float], float]) -> Callable[[Tensor, Tensor], Tensor]:
+        pass
 
     @staticmethod
     def reduce(
         fn: Callable[[float, float], float], start: float = 0.0
-    ) -> Callable[[Tensor, int], Tensor]: ...
+    ) -> Callable[[Tensor, int], Tensor]:
+        pass
 
     @staticmethod
     def matrix_multiply(a: Tensor, b: Tensor) -> Tensor:
-        """Matrix multiply"""
-        raise NotImplementedError("Not implemented in this assignment")
+        pass
 
     cuda = False
 
 
 class TensorBackend:
     def __init__(self, ops: Type[TensorOps]):
-        """Dynamically construct a tensor backend based on a `tensor_ops` object
+        """
+        Dynamically construct a tensor backend based on a `tensor_ops` object
         that implements map, zip, and reduce higher-order functions.
 
         Args:
             ops : tensor operations object see `tensor_ops.py`
 
 
-        Returns:
+        Returns :
             A collection of tensor functions
 
         """
+
         # Maps
         self.neg_map = ops.map(operators.neg)
         self.sigmoid_map = ops.map(operators.sigmoid)
@@ -71,6 +72,7 @@ class TensorBackend:
         self.log_map = ops.map(operators.log)
         self.exp_map = ops.map(operators.exp)
         self.id_map = ops.map(operators.id)
+        self.id_cmap = ops.cmap(operators.id)
         self.inv_map = ops.map(operators.inv)
 
         # Zips
@@ -93,7 +95,8 @@ class TensorBackend:
 class SimpleOps(TensorOps):
     @staticmethod
     def map(fn: Callable[[float], float]) -> MapProto:
-        """Higher-order tensor map function ::
+        """
+        Higher-order tensor map function ::
 
           fn_map = map(fn)
           fn_map(a, out)
@@ -119,8 +122,8 @@ class SimpleOps(TensorOps):
 
         Returns:
             new tensor data
-
         """
+
         f = tensor_map(fn)
 
         def ret(a: Tensor, out: Optional[Tensor] = None) -> Tensor:
@@ -133,9 +136,10 @@ class SimpleOps(TensorOps):
 
     @staticmethod
     def zip(
-        fn: Callable[[float, float], float],
+        fn: Callable[[float, float], float]
     ) -> Callable[["Tensor", "Tensor"], "Tensor"]:
-        """Higher-order tensor zip function ::
+        """
+        Higher-order tensor zip function ::
 
           fn_zip = zip(fn)
           out = fn_zip(a, b)
@@ -160,8 +164,8 @@ class SimpleOps(TensorOps):
 
         Returns:
             :class:`TensorData` : new tensor data
-
         """
+
         f = tensor_zip(fn)
 
         def ret(a: "Tensor", b: "Tensor") -> "Tensor":
@@ -179,7 +183,8 @@ class SimpleOps(TensorOps):
     def reduce(
         fn: Callable[[float, float], float], start: float = 0.0
     ) -> Callable[["Tensor", int], "Tensor"]:
-        """Higher-order tensor reduce function. ::
+        """
+        Higher-order tensor reduce function. ::
 
           fn_reduce = reduce(fn)
           out = fn_reduce(a, dim)
@@ -199,7 +204,6 @@ class SimpleOps(TensorOps):
 
         Returns:
             :class:`TensorData` : new tensor
-
         """
         f = tensor_reduce(fn)
 
@@ -218,8 +222,15 @@ class SimpleOps(TensorOps):
 
     @staticmethod
     def matrix_multiply(a: "Tensor", b: "Tensor") -> "Tensor":
-        """Matrix multiplication"""
-        raise NotImplementedError("Not implemented in this assignment")
+        batch_size = a.shape[0]
+        in_size = a.shape[1]
+        out_size = b.shape[1]
+
+        a_expanded = a.contiguous().view(batch_size, in_size, 1)
+        b_expanded = b.contiguous().view(1, in_size, out_size)
+        mul = a_expanded * b_expanded
+        output = mul.sum(dim=1).view(batch_size, out_size)
+        return output
 
     is_cuda = False
 
@@ -227,10 +238,9 @@ class SimpleOps(TensorOps):
 # Implementations.
 
 
-def tensor_map(
-    fn: Callable[[float], float],
-) -> Callable[[Storage, Shape, Strides, Storage, Shape, Strides], None]:
-    """Low-level implementation of tensor map between
+def tensor_map(fn: Callable[[float], float]) -> Any:
+    """
+    Low-level implementation of tensor map between
     tensors with *possibly different strides*.
 
     Simple version:
@@ -247,10 +257,15 @@ def tensor_map(
 
     Args:
         fn: function from float-to-float to apply
+        out (array): storage for out tensor
+        out_shape (array): shape for out tensor
+        out_strides (array): strides for out tensor
+        in_storage (array): storage for in tensor
+        in_shape (array): shape for in tensor
+        in_strides (array): strides for in tensor
 
     Returns:
-        Tensor map function.
-
+        None : Fills in `out`
     """
 
     def _map(
@@ -261,17 +276,22 @@ def tensor_map(
         in_shape: Shape,
         in_strides: Strides,
     ) -> None:
-        raise NotImplementedError("Need to include this file from past assignment.")
+        out_ind = np.zeros(len(out_shape))
+        in_ind = np.zeros(len(in_shape))
+        for i in range(int(np.prod(out_shape))):
+            # достанем out_ind
+            to_index(i, out_shape, out_ind)
+            # делаем бродкастинг и берем соотв in_ind
+            broadcast_index(out_ind, out_shape, in_shape, in_ind)
+
+            out[index_to_position(out_ind, out_strides)] = fn(in_storage[index_to_position(in_ind, in_strides)])
 
     return _map
 
 
-def tensor_zip(
-    fn: Callable[[float, float], float],
-) -> Callable[
-    [Storage, Shape, Strides, Storage, Shape, Strides, Storage, Shape, Strides], None
-]:
-    """Low-level implementation of tensor zip between
+def tensor_zip(fn: Callable[[float, float], float]) -> Any:
+    """
+    Low-level implementation of tensor zip between
     tensors with *possibly different strides*.
 
     Simple version:
@@ -288,10 +308,18 @@ def tensor_zip(
 
     Args:
         fn: function mapping two floats to float to apply
+        out (array): storage for `out` tensor
+        out_shape (array): shape for `out` tensor
+        out_strides (array): strides for `out` tensor
+        a_storage (array): storage for `a` tensor
+        a_shape (array): shape for `a` tensor
+        a_strides (array): strides for `a` tensor
+        b_storage (array): storage for `b` tensor
+        b_shape (array): shape for `b` tensor
+        b_strides (array): strides for `b` tensor
 
     Returns:
-        Tensor zip function.
-
+        None : Fills in `out`
     """
 
     def _zip(
@@ -305,25 +333,38 @@ def tensor_zip(
         b_shape: Shape,
         b_strides: Strides,
     ) -> None:
-        raise NotImplementedError("Need to include this file from past assignment.")
+        out_ind = np.zeros(len(out_shape))
+        a_ind_broad = np.zeros(len(a_shape))
+        b_ind_broad = np.zeros(len(b_shape))
+
+        for i in range(int(np.prod(out_shape))):
+            to_index(i, out_shape, out_ind)
+            broadcast_index(out_ind, out_shape, a_shape, a_ind_broad)
+            broadcast_index(out_ind, out_shape, b_shape, b_ind_broad)
+            out[index_to_position(out_ind, out_strides)] = fn(a_storage[index_to_position(a_ind_broad, a_strides)], b_storage[index_to_position(b_ind_broad, b_strides)])
 
     return _zip
 
 
-def tensor_reduce(
-    fn: Callable[[float, float], float],
-) -> Callable[[Storage, Shape, Strides, Storage, Shape, Strides, int], None]:
-    """Low-level implementation of tensor reduce.
+def tensor_reduce(fn: Callable[[float, float], float]) -> Any:
+    """
+    Low-level implementation of tensor reduce.
 
     * `out_shape` will be the same as `a_shape`
        except with `reduce_dim` turned to size `1`
 
     Args:
         fn: reduction function mapping two floats to float
+        out (array): storage for `out` tensor
+        out_shape (array): shape for `out` tensor
+        out_strides (array): strides for `out` tensor
+        a_storage (array): storage for `a` tensor
+        a_shape (array): shape for `a` tensor
+        a_strides (array): strides for `a` tensor
+        reduce_dim (int): dimension to reduce out
 
     Returns:
-        Tensor reduce function.
-
+        None : Fills in `out`
     """
 
     def _reduce(
@@ -335,8 +376,18 @@ def tensor_reduce(
         a_strides: Strides,
         reduce_dim: int,
     ) -> None:
-        raise NotImplementedError("Need to include this file from past assignment.")
-
+        # уменьшает размерность тензора, агрегируя значения вдоль осей
+        # идем по большому 
+        a_index = np.zeros_like(a_shape)
+        out_ind = np.zeros_like(out_shape)
+        for i in range(int(np.prod(a_shape))):
+            # получили нормальный индекс для i элем
+            to_index(i, a_shape, a_index)
+            # индексы для всех размерностей сохраняются кроме той что убираем
+            out_ind = [a_index[j] for j in range(len(a_shape))]
+            out_ind[reduce_dim] = 0
+            # аггрег функция
+            out[index_to_position(out_ind, out_strides)] = fn(out[index_to_position(out_ind, out_strides)], a_storage[index_to_position(a_index, a_strides)])
     return _reduce
 
 
